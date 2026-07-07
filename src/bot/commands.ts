@@ -87,6 +87,34 @@ export function setupBot(bot: Telegraf) {
       return;
     }
 
+    if (session?.url && !session?.platform.includes('untrack') && /^\d{3,}$/.test(text)) {
+      const price = parseInt(text, 10);
+      const platform = session.platform;
+      const url = session.url;
+      userLinks.delete(cid);
+      const affiliateUrl = buildAffiliateLink(url, platform);
+      const productId = `${platform}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const tracked: TrackedProduct = {
+        id: productId,
+        chatId: cid,
+        url: affiliateUrl,
+        platform: platform as 'wildberries' | 'ozon' | 'aliexpress',
+        title: `Товар ${platform === 'wildberries' ? 'Wildberries' : platform === 'ozon' ? 'Ozon' : 'AliExpress'}`,
+        currentPrice: price,
+        originalPrice: price,
+        currency: '₽',
+        lastChecked: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+      };
+      addProduct(tracked);
+      await ctx.reply(
+        `✅ *${price.toLocaleString('ru-RU')} ₽* — цена добавлена!\n`
+          + '🔔 Буду проверять каждые 3 часа и уведомлю при снижении!',
+        { parse_mode: 'Markdown' },
+      );
+      return;
+    }
+
     if (session?.platform === 'untrack') {
       const index = parseInt(text, 10) - 1;
       const products = getProducts(cid);
@@ -130,9 +158,10 @@ async function handleUrl(ctx: Context, url: string) {
   }
 
   if (!info || !info.price) {
+    userLinks.set(cid, { url, platform });
     await ctx.reply(
-      '😔 Не удалось получить цену. Возможно, ссылка неверная или товар недоступен.\n'
-        + 'Попробуйте другую ссылку.',
+      '😔 Не удалось получить цену автоматически.\n'
+        + '👉 Введите цену товара в рублях (только цифры):',
     );
     return;
   }
