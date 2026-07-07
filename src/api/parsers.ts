@@ -1,5 +1,13 @@
 import axios from 'axios';
 
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36';
+
+const api = axios.create({
+  timeout: 15000,
+  headers: { 'User-Agent': UA },
+  maxRedirects: 5,
+});
+
 export interface ProductInfo {
   title: string;
   price: number;
@@ -12,9 +20,9 @@ export async function parseWildberries(url: string): Promise<ProductInfo | null>
     const match = url.match(/\/catalog\/(\d+)\//) || url.match(/\/product\/(\d+)/) || url.match(/(\d{8,})/);
     if (!match) return null;
     const id = match[1];
-    const { data } = await axios.get(
+
+    const { data } = await api.get(
       `https://card.wb.ru/cards/v2/detail?appType=1&curr=rub&dest=-1257786&spp=30&nm=${id}`,
-      { headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: 10000 },
     );
     const product = data?.data?.products?.[0];
     if (!product) return null;
@@ -26,7 +34,31 @@ export async function parseWildberries(url: string): Promise<ProductInfo | null>
       platform: 'wildberries',
     };
   } catch {
-    return null;
+    try {
+      const { data: html } = await api.get(url, {
+        headers: { 'Accept': 'text/html' },
+      });
+      const jsonLd = html.match(/<script[^>]*type="application\/ld\+json"[^>]*>({.+?})<\/script>/s);
+      if (jsonLd) {
+        const parsed = JSON.parse(jsonLd[1]);
+        const price = parsed?.offers?.price || parsed?.offers?.[0]?.price;
+        if (price) {
+          const title = parsed?.name || 'Товар Wildberries';
+          return { title, price: Math.round(Number(price)), currency: '₽', platform: 'wildberries' };
+        }
+      }
+      const priceMeta = html.match(/"price":\s*"?(\d+)/);
+      if (priceMeta) {
+        const titleMatch = html.match(/<title>([^<]+)<\/title>/);
+        return {
+          title: titleMatch ? titleMatch[1].trim() : 'Товар Wildberries',
+          price: parseInt(priceMeta[1], 10),
+          currency: '₽',
+          platform: 'wildberries',
+        };
+      }
+      return null;
+    } catch { return null; }
   }
 }
 
@@ -36,73 +68,53 @@ export async function parseOzon(url: string): Promise<ProductInfo | null> {
     if (!match) return null;
     const id = match[1];
 
-    const { data } = await axios.get(
-      `https://www.ozon.ru/api/product/description/${id}`,
-      {
+    try {
+      const { data } = await api.get(`https://www.ozon.ru/api/product/description/${id}`, {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
           'Accept': 'application/json',
           'X-O3-Application-Name': 'ozonapp',
+          'User-Agent': UA,
         },
-        timeout: 10000,
-      },
-    );
-
-    if (data?.name) {
-      let price = 0;
-      const pricing = data?.price || data?.marketingPrice || data?.oldPrice || data?.minPrice;
-      if (pricing) price = pricing;
-      if (data?.priceInfo?.price) price = data.priceInfo.price;
-      if (data?.offer?.price) price = data.offer.price;
-      return {
-        title: data.name || 'Товар Ozon',
-        price: Math.round(price),
-        currency: '₽',
-        platform: 'ozon',
-      };
-    }
-
-    const { data: html } = await axios.get(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/html',
-      },
-      timeout: 10000,
-    });
-
-    const jsonMatch = html.match(/window\s*\.\s*__NUXT__\s*=\s*({.+?});/);
-    if (jsonMatch) {
-      try {
-        const nuxt = JSON.parse(jsonMatch[1]);
-        const state = nuxt?.state || nuxt?.store || nuxt;
-        const price = findPriceInObject(state);
+      });
+      if (data?.name) {
+        const price = data?.priceInfo?.price || data?.price || data?.marketingPrice || data?.oldPrice || data?.minPrice || data?.offer?.price;
         if (price) {
-          const titleMatch = html.match(/<h1[^>]*>([^<]+)<\/h1>/);
-          return {
-            title: titleMatch ? titleMatch[1].trim() : 'Товар Ozon',
-            price: Math.round(price),
-            currency: '₽',
-            platform: 'ozon',
-          };
+          return { title: data.name, price: Math.round(Number(price)), currency: '₽', platform: 'ozon' };
         }
-      } catch { }
-    }
+      }
+    } catch { }
 
-    const priceMatch = html.match(/(\d[\d\s]*)\s*(?:₽|руб)/);
-    if (priceMatch) {
-      const titleMatch = html.match(/<h1[^>]*>([^<]+)<\/h1>/);
-      return {
-        title: titleMatch ? titleMatch[1].trim() : 'Товар Ozon',
-        price: parseInt(priceMatch[1].replace(/\s/g, ''), 10),
-        currency: '₽',
-        platform: 'ozon',
-      };
-    }
+    try {
+      const { data: html } = await api.get(url, {
+        headers: { 'Accept': 'text/html, */*' },
+      });
+
+      const jsonLd = html.match(/<script[^>]*type="application\/ld\+json"[^>]*>({.+?})<\/script>/s);
+      if (jsonLd) {
+        try {
+          const parsed = JSON.parse(jsonLd[1]);
+          const price = parsed?.offers?.price || parsed?.offers?.[0]?.price;
+          if (price) {
+            const title = parsed?.name || 'Товар Ozon';
+            return { title, price: Math.round(Number(price)), currency: '₽', platform: 'ozon' };
+          }
+        } catch { }
+      }
+
+      const priceMeta = html.match(/"price":"?(\d+)/) || html.match(/(\d[\d\s]*)\s*₽/);
+      if (priceMeta) {
+        const titleMatch = html.match(/<title>([^<]+)<\/title>/) || html.match(/<h1[^>]*>([^<]+)<\/h1>/);
+        return {
+          title: titleMatch ? titleMatch[1].trim() : 'Товар Ozon',
+          price: parseInt(priceMeta[1].replace(/\s/g, ''), 10),
+          currency: '₽',
+          platform: 'ozon',
+        };
+      }
+    } catch { }
 
     return null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 function findPriceInObject(obj: any): number | null {
