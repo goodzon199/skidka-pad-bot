@@ -81,7 +81,7 @@ export function setupBot(bot: Telegraf) {
     const text = ctx.message.text.trim();
     const session = userLinks.get(cid);
 
-    const urlPattern = /^(https?:\/\/)?([\w.-]+\.)+(wildberries|wb|ozon|aliexpress|alicdn)\S+/i;
+    const urlPattern = /^(https?:\/\/)?([\w.-]+\.)?(wildberries|wb|ozon|aliexpress|alicdn)\S+/i;
     if (urlPattern.test(text)) {
       await handleUrl(ctx, text);
       return;
