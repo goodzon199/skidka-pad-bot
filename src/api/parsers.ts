@@ -21,45 +21,41 @@ export async function parseWildberries(url: string): Promise<ProductInfo | null>
     if (!match) return null;
     const id = match[1];
 
-    const { data } = await api.get(
+    for (const apiUrl of [
       `https://card.wb.ru/cards/v2/detail?appType=1&curr=rub&dest=-1257786&spp=30&nm=${id}`,
-    );
-    const product = data?.data?.products?.[0];
-    if (!product) return null;
-    const price = product.sizes?.[0]?.price?.product || product.price?.product || product.priceU / 100;
-    return {
-      title: product.name || 'Товар Wildberries',
-      price: Math.round(price),
-      currency: '₽',
-      platform: 'wildberries',
-    };
-  } catch {
+      `https://wbx-content-v2.wbstatic.net/ru/${id}.json`,
+      `https://basket-01.wb.ru/vol${id.slice(0, 4)}/part${id.slice(0, 6)}/${id}/info/ru/card.json`,
+    ]) {
+      try {
+        const { data } = await api.get(apiUrl);
+        const product = data?.data?.products?.[0] || data;
+        if (!product) continue;
+        const price = product.sizes?.[0]?.price?.product || product.price?.product || product.priceU / 100 || product.salePrice || product.price;
+        if (price) {
+          return {
+            title: product.name || product.title || 'Товар Wildberries',
+            price: Math.round(Number(price)),
+            currency: '₽',
+            platform: 'wildberries',
+          };
+        }
+      } catch { }
+    }
+
     try {
-      const { data: html } = await api.get(url, {
-        headers: { 'Accept': 'text/html' },
-      });
+      const { data: html } = await api.get(url, { headers: { 'Accept': 'text/html' } });
       const jsonLd = html.match(/<script[^>]*type="application\/ld\+json"[^>]*>({.+?})<\/script>/s);
       if (jsonLd) {
         const parsed = JSON.parse(jsonLd[1]);
         const price = parsed?.offers?.price || parsed?.offers?.[0]?.price;
         if (price) {
-          const title = parsed?.name || 'Товар Wildberries';
-          return { title, price: Math.round(Number(price)), currency: '₽', platform: 'wildberries' };
+          return { title: parsed?.name || 'Товар Wildberries', price: Math.round(Number(price)), currency: '₽', platform: 'wildberries' };
         }
       }
-      const priceMeta = html.match(/"price":\s*"?(\d+)/);
-      if (priceMeta) {
-        const titleMatch = html.match(/<title>([^<]+)<\/title>/);
-        return {
-          title: titleMatch ? titleMatch[1].trim() : 'Товар Wildberries',
-          price: parseInt(priceMeta[1], 10),
-          currency: '₽',
-          platform: 'wildberries',
-        };
-      }
-      return null;
-    } catch { return null; }
-  }
+    } catch { }
+
+    return null;
+  } catch { return null; }
 }
 
 export async function parseOzon(url: string): Promise<ProductInfo | null> {
