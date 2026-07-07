@@ -119,6 +119,7 @@ async function handleUrl(ctx: Context, url: string) {
     return;
   }
 
+  console.log(`[handleUrl] platform=${platform} url=${url.slice(0, 100)}`);
   await ctx.reply('🔍 Получаю информацию о товаре...');
 
   let info;

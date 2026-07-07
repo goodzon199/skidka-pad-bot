@@ -9,7 +9,7 @@ export interface ProductInfo {
 
 export async function parseWildberries(url: string): Promise<ProductInfo | null> {
   try {
-    const match = url.match(/\/catalog\/(\d+)\//) || url.match(/\/product\/(\d+)/);
+    const match = url.match(/\/catalog\/(\d+)\//) || url.match(/\/product\/(\d+)/) || url.match(/(\d{8,})/);
     if (!match) return null;
     const id = match[1];
     const { data } = await axios.get(
@@ -32,7 +32,7 @@ export async function parseWildberries(url: string): Promise<ProductInfo | null>
 
 export async function parseOzon(url: string): Promise<ProductInfo | null> {
   try {
-    const match = url.match(/[-\/](\d{6,})\//) || url.match(/(\d{6,})\.html/) || url.match(/\/product\/(\d{6,})/);
+    const match = url.match(/[-\/](\d{7,12})(?:\/|$|\.html|\?)/) || url.match(/\/(\d{7,12})\b/);
     if (!match) return null;
     const id = match[1];
 
