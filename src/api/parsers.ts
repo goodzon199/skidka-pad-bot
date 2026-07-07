@@ -7,11 +7,6 @@ export interface ProductInfo {
   platform: 'wildberries' | 'ozon' | 'aliexpress';
 }
 
-function extractPrice(text: string): number | null {
-  const digits = text.replace(/[^\d]/g, '');
-  return digits ? parseInt(digits, 10) : null;
-}
-
 export async function parseWildberries(url: string): Promise<ProductInfo | null> {
   try {
     const match = url.match(/\/catalog\/(\d+)\//) || url.match(/\/product\/(\d+)/);
@@ -37,66 +32,130 @@ export async function parseWildberries(url: string): Promise<ProductInfo | null>
 
 export async function parseOzon(url: string): Promise<ProductInfo | null> {
   try {
-    const { data } = await axios.get(url, {
+    const match = url.match(/[-\/](\d{6,})\//) || url.match(/(\d{6,})\.html/) || url.match(/\/product\/(\d{6,})/);
+    if (!match) return null;
+    const id = match[1];
+
+    const { data } = await axios.get(
+      `https://www.ozon.ru/api/product/description/${id}`,
+      {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Accept': 'application/json',
+          'X-O3-Application-Name': 'ozonapp',
+        },
+        timeout: 10000,
+      },
+    );
+
+    if (data?.name) {
+      let price = 0;
+      const pricing = data?.price || data?.marketingPrice || data?.oldPrice || data?.minPrice;
+      if (pricing) price = pricing;
+      if (data?.priceInfo?.price) price = data.priceInfo.price;
+      if (data?.offer?.price) price = data.offer.price;
+      return {
+        title: data.name || 'Товар Ozon',
+        price: Math.round(price),
+        currency: '₽',
+        platform: 'ozon',
+      };
+    }
+
+    const { data: html } = await axios.get(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': 'text/html',
       },
       timeout: 10000,
     });
-    const titleMatch = data.match(/<h1[^>]*>([^<]+)<\/h1>/);
-    const priceMatch = data.match(/"price":\s*"?(\d+)/);
+
+    const jsonMatch = html.match(/window\s*\.\s*__NUXT__\s*=\s*({.+?});/);
+    if (jsonMatch) {
+      try {
+        const nuxt = JSON.parse(jsonMatch[1]);
+        const state = nuxt?.state || nuxt?.store || nuxt;
+        const price = findPriceInObject(state);
+        if (price) {
+          const titleMatch = html.match(/<h1[^>]*>([^<]+)<\/h1>/);
+          return {
+            title: titleMatch ? titleMatch[1].trim() : 'Товар Ozon',
+            price: Math.round(price),
+            currency: '₽',
+            platform: 'ozon',
+          };
+        }
+      } catch { }
+    }
+
+    const priceMatch = html.match(/(\d[\d\s]*)\s*(?:₽|руб)/);
     if (priceMatch) {
+      const titleMatch = html.match(/<h1[^>]*>([^<]+)<\/h1>/);
       return {
         title: titleMatch ? titleMatch[1].trim() : 'Товар Ozon',
-        price: parseInt(priceMatch[1], 10),
+        price: parseInt(priceMatch[1].replace(/\s/g, ''), 10),
         currency: '₽',
         platform: 'ozon',
       };
     }
-    const metaPrice = data.match(/(\d[\d\s]*)\s*₽/);
-    if (metaPrice) {
-      return {
-        title: titleMatch ? titleMatch[1].trim() : 'Товар Ozon',
-        price: extractPrice(metaPrice[1]) || 0,
-        currency: '₽',
-        platform: 'ozon',
-      };
-    }
+
     return null;
   } catch {
     return null;
   }
 }
 
+function findPriceInObject(obj: any): number | null {
+  if (!obj || typeof obj !== 'object') return null;
+  for (const key of ['price', 'totalPrice', 'finalPrice', 'sellingPrice', 'marketingPrice']) {
+    if (typeof obj[key] === 'number' && obj[key] > 0) return obj[key];
+    if (typeof obj[key] === 'string' && /^\d+$/.test(obj[key])) return parseInt(obj[key], 10);
+  }
+  for (const val of Object.values(obj)) {
+    const result = findPriceInObject(val);
+    if (result) return result;
+  }
+  return null;
+}
+
 export async function parseAliExpress(url: string): Promise<ProductInfo | null> {
   try {
-    const { data } = await axios.get(url, {
+    const { data: html } = await axios.get(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': 'text/html',
       },
       timeout: 10000,
     });
-    const titleMatch = data.match(/<title>([^<]+)<\/title>/);
-    const priceMatch = data.match(/"(?:price|minPrice|salePrice)["\s:]+(\d+\.?\d*)/);
+
+    const jsonMatch = html.match(/data: ({.*?})\s*,\s*\n/i) || html.match(/window\.runParams\s*=\s*({.+?});/);
+    if (jsonMatch) {
+      try {
+        const parsed = JSON.parse(jsonMatch[1]);
+        const price = parsed?.price || parsed?.minPrice || parsed?.salePrice || parsed?.originalPrice;
+        if (price) {
+          const titleMatch = html.match(/<title>([^<]+)<\/title>/);
+          return {
+            title: titleMatch ? titleMatch[1].trim().replace(/\s*\|.*/, '') : 'Товар AliExpress',
+            price: Math.round(parseFloat(price)),
+            currency: '₽',
+            platform: 'aliexpress',
+          };
+        }
+      } catch { }
+    }
+
+    const priceMatch = html.match(/(\d[\d\s]*)\s*(?:₽|руб)/);
     if (priceMatch) {
+      const titleMatch = html.match(/<title>([^<]+)<\/title>/);
       return {
-        title: titleMatch ? titleMatch[1].trim().replace(' | AliExpress', '') : 'Товар AliExpress',
-        price: Math.round(parseFloat(priceMatch[1])),
+        title: titleMatch ? titleMatch[1].trim().replace(/\s*\|.*/, '') : 'Товар AliExpress',
+        price: parseInt(priceMatch[1].replace(/\s/g, ''), 10),
         currency: '₽',
         platform: 'aliexpress',
       };
     }
-    const rubMatch = data.match(/(\d[\d\s]*)\s*(?:руб|₽)/);
-    if (rubMatch) {
-      return {
-        title: titleMatch ? titleMatch[1].trim().replace(' | AliExpress', '') : 'Товар AliExpress',
-        price: extractPrice(rubMatch[1]) || 0,
-        currency: '₽',
-        platform: 'aliexpress',
-      };
-    }
+
     return null;
   } catch {
     return null;
@@ -106,6 +165,6 @@ export async function parseAliExpress(url: string): Promise<ProductInfo | null> 
 export function detectPlatform(url: string): 'wildberries' | 'ozon' | 'aliexpress' | null {
   if (url.includes('wildberries') || url.includes('wb.ru')) return 'wildberries';
   if (url.includes('ozon') || url.includes('ozon.ru')) return 'ozon';
-  if (url.includes('aliexpress') || url.includes('alicdn')) return 'aliexpress';
+  if (url.includes('aliexpress') || url.includes('alicdn') || url.includes('aliexpress.ru')) return 'aliexpress';
   return null;
 }
